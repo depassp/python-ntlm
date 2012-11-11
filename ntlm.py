@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # This library is free software: you can redistribute it and/or
 # modify it under the terms of the GNU Lesser General Public
 # License as published by the Free Software Foundation, either
@@ -18,6 +19,7 @@ import des
 import hashlib
 import hmac
 import random
+import unittest
 from socket import gethostname
 
 NTLM_NegotiateUnicode                =  0x00000001
@@ -408,52 +410,92 @@ def create_NT_hashed_password_v2(passwd, user, domain):
 def create_sessionbasekey(password):
     return hashlib.new('md4', create_NT_hashed_password_v1(password)).digest()
 
-if __name__ == "__main__":
-    def ByteToHex( byteStr ):
-        """
-        Convert a byte string to it's hex string representation e.g. for output.
-        """
-        return ' '.join( [ "%02X" % ord( x ) for x in byteStr ] )
+def ByteToHex( byteStr ):
+    """
+    Convert a byte string to it's hex string representation e.g. for output.
+    """
+    return ' '.join( [ "%02x" % ord( x ) for x in byteStr ] )
 
-    def HexToByte( hexStr ):
-        """
-        Convert a string hex byte values into a byte string. The Hex Byte values may
-        or may not be space separated.
-        """
-        bytes = []
+def HexToByte( hexStr ):
+    """
+    Convert a string hex byte values into a byte string. The Hex Byte values may
+    or may not be space separated.
+    """
+    bytes = []
 
-        hexStr = ''.join( hexStr.split(" ") )
+    hexStr = ''.join( hexStr.split(" ") )
 
-        for i in range(0, len(hexStr), 2):
-            bytes.append( chr( int (hexStr[i:i+2], 16 ) ) )
+    for i in range(0, len(hexStr), 2):
+        bytes.append( chr( int (hexStr[i:i+2], 16 ) ) )
 
-        return ''.join( bytes )
+    return ''.join( bytes )
+
+class TestNTLM(unittest.TestCase):
+    def testFunctions(self):
+        ServerChallenge = HexToByte("01 23 45 67 89 ab cd ef")
+        ClientChallenge = '\xaa'*8
+        Time = '\x00'*8
+        Workstation = "COMPUTER".encode('utf-16-le')
+        ServerName = "Server".encode('utf-16-le')
+        User = "User"
+        Domain = "Domain"
+        Password = "Password"
+        RandomSessionKey = '\55'*16
+        self.assertEquals(
+            HexToByte("e5 2c ac 67 41 9a 9a 22 4a 3b 10 8f 3f a6 cb 6d"),
+            create_LM_hashed_password_v1(Password))                  # [MS-NLMP] page 72
+        self.assertEquals(
+            HexToByte("a4 f4 9c 40 65 10 bd ca b6 82 4e e7 c3 0f d8 52"),
+            create_NT_hashed_password_v1(Password))    # [MS-NLMP] page 73
+        self.assertEquals(
+            HexToByte("d8 72 62 b0 cd e4 b1 cb 74 99 be cc cd f1 07 84"),
+            create_sessionbasekey(Password))
+        self.assertEquals(
+            HexToByte("67 c4 30 11 f3 02 98 a2 ad 35 ec e6 4f 16 33 1c"
+                      "44 bd be d9 27 84 1f 94"),
+            calc_resp(create_NT_hashed_password_v1(Password), ServerChallenge))
+        self.assertEquals(
+            HexToByte("98 de f7 b8 7f 88 aa 5d af e2 df 77 96 88 a1 72"
+                      "de f1 1c 7d 5c cd ef 13"),
+            calc_resp(create_LM_hashed_password_v1(Password), ServerChallenge))
+
+        (NTLMv1Response, LMv1Response) = ntlm2sr_calc_resp(
+            create_NT_hashed_password_v1(Password),
+            ServerChallenge, ClientChallenge)
+        self.assertEquals(
+            HexToByte("aa aa aa aa aa aa aa aa 00 00 00 00 00 00 00 00"
+                      "00 00 00 00 00 00 00 00"),
+            LMv1Response)  # [MS-NLMP] page 75
+        self.assertEquals(
+            HexToByte("75 37 f8 03 ae 36 71 28 ca 45 82 04 bd e7 ca f8"
+                      "1e 97 ed 26 83 26 72 32"),
+            NTLMv1Response)
+
+        ResponseKeyLM = ResponseKeyNT = \
+            create_NT_hashed_password_v2(Password, User, Domain)
+
+        self.assertEquals(
+            HexToByte("0c 86 8a 40 3b fd 7a 93 a3 00 1e f2 2e f0 2e 3f"),
+            ResponseKeyLM)    # [MS-NLMP] page 76
+        (NTLMv2Response,LMv2Response) = ComputeResponse(
+                ResponseKeyNT, ResponseKeyLM, ServerChallenge,
+                ServerName, ClientChallenge, Time)
+        self.assertEquals(
+            HexToByte("86 c3 50 97 ac 9c ec 10 25 54 76 4a 57 cc cc 19"
+                      "aa aa aa aa aa aa aa aa"),
+            LMv2Response)  # [MS-NLMP] page 76
         
-    ServerChallenge = HexToByte("01 23 45 67 89 ab cd ef")
-    ClientChallenge = '\xaa'*8
-    Time = '\x00'*8
-    Workstation = "COMPUTER".encode('utf-16-le')
-    ServerName = "Server".encode('utf-16-le')
-    User = "User"
-    Domain = "Domain"
-    Password = "Password"
-    RandomSessionKey = '\55'*16
-    assert HexToByte("e5 2c ac 67 41 9a 9a 22 4a 3b 10 8f 3f a6 cb 6d") == create_LM_hashed_password_v1(Password)                  # [MS-NLMP] page 72
-    assert HexToByte("a4 f4 9c 40 65 10 bd ca b6 82 4e e7 c3 0f d8 52") == create_NT_hashed_password_v1(Password)    # [MS-NLMP] page 73
-    assert HexToByte("d8 72 62 b0 cd e4 b1 cb 74 99 be cc cd f1 07 84") == create_sessionbasekey(Password)
-    assert HexToByte("67 c4 30 11 f3 02 98 a2 ad 35 ec e6 4f 16 33 1c 44 bd be d9 27 84 1f 94") == calc_resp(create_NT_hashed_password_v1(Password), ServerChallenge)
-    assert HexToByte("98 de f7 b8 7f 88 aa 5d af e2 df 77 96 88 a1 72 de f1 1c 7d 5c cd ef 13") == calc_resp(create_LM_hashed_password_v1(Password), ServerChallenge)
-    
-    (NTLMv1Response,LMv1Response) = ntlm2sr_calc_resp(create_NT_hashed_password_v1(Password), ServerChallenge, ClientChallenge)
-    assert HexToByte("aa aa aa aa aa aa aa aa 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00") == LMv1Response  # [MS-NLMP] page 75
-    assert HexToByte("75 37 f8 03 ae 36 71 28 ca 45 82 04 bd e7 ca f8 1e 97 ed 26 83 26 72 32") == NTLMv1Response
-    
-    assert HexToByte("0c 86 8a 40 3b fd 7a 93 a3 00 1e f2 2e f0 2e 3f") == create_NT_hashed_password_v2(Password, User, Domain)    # [MS-NLMP] page 76
-    ResponseKeyLM = ResponseKeyNT = create_NT_hashed_password_v2(Password, User, Domain)
-    (NTLMv2Response,LMv2Response) = ComputeResponse(ResponseKeyNT, ResponseKeyLM, ServerChallenge, ServerName, ClientChallenge, Time)
-    assert HexToByte("86 c3 50 97 ac 9c ec 10 25 54 76 4a 57 cc cc 19 aa aa aa aa aa aa aa aa") == LMv2Response  # [MS-NLMP] page 76
-    
-    # expected failure
-    # According to the spec in section '3.3.2 NTLM v2 Authentication' the NTLMv2Response should be longer than the value given on page 77 (this suggests a mistake in the spec)
-    #~ assert HexToByte("68 cd 0a b8 51 e5 1c 96 aa bc 92 7b eb ef 6a 1c") == NTLMv2Response, "\nExpected: 68 cd 0a b8 51 e5 1c 96 aa bc 92 7b eb ef 6a 1c\nActual:   %s" % ByteToHex(NTLMv2Response) # [MS-NLMP] page 77
-    
+        # expected failure
+        # According to the spec in section '3.3.2 NTLM v2 Authentication' the NTLMv2Response should be longer than the value given on page 77 (this suggests a mistake in the spec)
+        self.assertNotEquals(
+            HexToByte("68 cd 0a b8 51 e5 1c 96 aa bc 92 7b eb ef 6a 1c"),
+            NTLMv2Response)
+        self.assertEquals(
+            HexToByte("5a db bb 66 16 2a da f1 9e 5d 5f f5 30 43 0a"
+                      "08 01 01 00 00 00 00 00 00 00 00 00 00 00 00"
+                      "00 00 aa aa aa aa aa aa aa aa 00 00 00 00 01"
+                      "23 45 67 89 ab cd ef 00 00 00 00"),
+            NTLMv2Response) # [MS-NLMP] page 77
+
+if __name__ == "__main__":
+    unittest.main(__name__, verbosity=2)
